@@ -1,5 +1,6 @@
 import logging
 
+from django.db import connection
 from django.contrib.auth import signals as auth_signals, get_user_model
 from django.contrib.auth.models import AnonymousUser
 from django.contrib.contenttypes.models import ContentType
@@ -9,10 +10,11 @@ from django.utils import timezone
 
 from .middleware.easyaudit import get_current_request, get_current_user
 from .models import CRUDEvent, LoginEvent
-from .settings import REGISTERED_CLASSES, UNREGISTERED_CLASSES, WATCH_LOGIN_EVENTS, CRUD_DIFFERENCE_CALLBACKS
-
+from .settings import REGISTERED_CLASSES, UNREGISTERED_CLASSES, WATCH_LOGIN_EVENTS, CRUD_DIFFERENCE_CALLBACKS, \
+    MULTI_TENANT_SHARED_APPS, TENANT_MODEL
 
 logger = logging.getLogger(__name__)
+
 
 def should_audit(instance):
     """Returns True or False to indicate whether the instance
@@ -33,6 +35,29 @@ def should_audit(instance):
 
     # all good
     return True
+
+
+def set_user_and_save(instance, user, crud_event):
+    if user:
+        if TENANT_MODEL:
+            from tenant_schemas.utils import schema_context, get_public_schema_name, get_tenant_model
+
+            def _get_tenant():
+                return get_tenant_model().objects.filter(schema_name=connection.schema_name).first()
+
+            active_tenant = _get_tenant()
+            if instance._meta.app_label in MULTI_TENANT_SHARED_APPS:
+                if get_public_schema_name() != connection.schema_name:
+                    with schema_context(get_public_schema_name()):
+                        crud_event.user_pk_as_string = str(user.pk)
+                        crud_event.tenant = active_tenant
+                        crud_event.save()
+                        return crud_event
+
+    crud_event.user = user
+    crud_event.user_pk_as_string = str(user.pk) if user else user
+    crud_event.save()
+    return crud_event
 
 
 # signals
@@ -66,19 +91,18 @@ def post_save(sender, instance, created, raw, using, update_fields, **kwargs):
 
         # create crud event only if all callbacks returned True
         if create_crud_event:
-            crud_event = CRUDEvent.objects.create(
+            crud_event = CRUDEvent(
                 event_type=event_type,
                 object_repr=str(instance),
                 object_json_repr=object_json_repr,
                 content_type=ContentType.objects.get_for_model(instance),
                 object_id=instance.id,
-                user=user,
-                datetime=timezone.now(),
-                user_pk_as_string=str(user.pk) if user else user
+                datetime=timezone.now()
             )
-
-            crud_event.save()
-    except Exception:
+            # sets the user information on crud event - this is customized for multi tenant schema support
+            set_user_and_save(instance, user, crud_event)
+    except Exception as e:
+        print e
         logger.exception('easy audit had a post-save exception.')
 
 
@@ -100,18 +124,15 @@ def post_delete(sender, instance, using, **kwargs):
             user = None
 
         # crud event
-        crud_event = CRUDEvent.objects.create(
+        crud_event = CRUDEvent(
             event_type=CRUDEvent.DELETE,
             object_repr=str(instance),
             object_json_repr=object_json_repr,
             content_type=ContentType.objects.get_for_model(instance),
             object_id=instance.id,
-            user=user,
             datetime=timezone.now(),
-            user_pk_as_string=str(user.pk) if user else user
         )
-
-        crud_event.save()
+        set_user_and_save(instance, user, crud_event)
     except Exception:
         logger.exception('easy audit had a post-delete exception.')
 

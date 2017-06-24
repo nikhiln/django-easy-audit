@@ -12,6 +12,7 @@ from django.utils import six
 
 from easyaudit.models import CRUDEvent, LoginEvent
 
+
 def get_model_list(class_list):
     """
     Receives a list of strings with app_name.model_name format
@@ -50,3 +51,6 @@ for idx, callback in enumerate(CRUD_DIFFERENCE_CALLBACKS):
     if not callable(callback):  # keep as is if it is callable
         CRUD_DIFFERENCE_CALLBACKS[idx] = getattr(import_module('.'.join(callback.split('.')[:-1])),
                                                  callback.split('.')[-1], None)
+
+MULTI_TENANT_SHARED_APPS = getattr(settings, 'MULTI_TENANT_SHARED_APPS', [])
+TENANT_MODEL = getattr(settings, 'TENANT_MODEL', None)
