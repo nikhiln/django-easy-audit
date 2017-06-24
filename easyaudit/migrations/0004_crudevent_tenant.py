@@ -9,7 +9,6 @@ import django.db.models.deletion
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('customers', '0001_initial'),
         ('easyaudit', '0003_auto_20170228_1505'),
     ]
 
