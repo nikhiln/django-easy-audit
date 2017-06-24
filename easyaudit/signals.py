@@ -102,7 +102,6 @@ def post_save(sender, instance, created, raw, using, update_fields, **kwargs):
             # sets the user information on crud event - this is customized for multi tenant schema support
             set_user_and_save(instance, user, crud_event)
     except Exception as e:
-        print e
         logger.exception('easy audit had a post-save exception.')
 
 
