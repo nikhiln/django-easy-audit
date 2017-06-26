@@ -1,11 +1,13 @@
 import logging
 
+import json
 from django.db import connection
 from django.contrib.auth import signals as auth_signals, get_user_model
 from django.contrib.auth.models import AnonymousUser
 from django.contrib.contenttypes.models import ContentType
 from django.core import serializers
 from django.db.models import signals as models_signals
+from django.db.models.fields.related import ManyToManyField
 from django.utils import timezone
 
 from .middleware.easyaudit import get_current_request, get_current_user
@@ -59,6 +61,23 @@ def set_user_and_save(instance, user, crud_event):
     crud_event.save()
     return crud_event
 
+def get_json_repr(instance):
+    def _to_dict(instance):
+        opts = instance._meta
+        data = {}
+        for f in opts.concrete_fields + opts.many_to_many:
+            if isinstance(f, ManyToManyField):
+                if instance.pk is None:
+                    data[f.name] = []
+                else:
+                    data[f.name] = list(f.value_from_object(instance).values_list('pk', flat=True))
+            else:
+                data[f.name] = str(f.value_from_object(instance))
+        return data
+    
+    if instance:
+        return json.dumps(_to_dict(instance))
+    return None
 
 # signals
 def post_save(sender, instance, created, raw, using, update_fields, **kwargs):
@@ -67,7 +86,7 @@ def post_save(sender, instance, created, raw, using, update_fields, **kwargs):
         if not should_audit(instance):
             return False
 
-        object_json_repr = serializers.serialize("json", [instance])
+        object_json_repr = get_json_repr(instance)
 
         # created or updated?
         if created:
@@ -102,7 +121,9 @@ def post_save(sender, instance, created, raw, using, update_fields, **kwargs):
             # sets the user information on crud event - this is customized for multi tenant schema support
             set_user_and_save(instance, user, crud_event)
     except Exception as e:
-        logger.exception('easy audit had a post-save exception.')
+        import traceback
+        print(traceback.format_exc())
+        
 
 
 def post_delete(sender, instance, using, **kwargs):
@@ -111,7 +132,7 @@ def post_delete(sender, instance, using, **kwargs):
         if not should_audit(instance):
             return False
 
-        object_json_repr = serializers.serialize("json", [instance])
+        object_json_repr = get_json_repr(instance)
 
         # user
         try:
@@ -133,7 +154,8 @@ def post_delete(sender, instance, using, **kwargs):
         )
         set_user_and_save(instance, user, crud_event)
     except Exception:
-        logger.exception('easy audit had a post-delete exception.')
+        import traceback
+        print(traceback.format_exc())
 
 
 def user_logged_in(sender, request, user, **kwargs):
